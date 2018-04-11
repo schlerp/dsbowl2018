@@ -1,11 +1,15 @@
 import keras
-from keras import Sequential
-from keras.layers import InputLayer, Lambda
+from keras import Model
+from keras.layers import Input, Lambda, concatenate
 from keras.layers import Conv2D, Conv2DTranspose, MaxPool2D, UpSampling2D
 
 
-from test_data import get_train_numpy, get_test_numpy
-(X, Y), (Xval, Yval) = get_train_numpy()
+from data_utils import get_train_numpy, get_test_numpy
+
+X, Y = get_train_numpy()
+from sklearn.model_selection import train_test_split
+
+X, Xval, Y, Yval = train_test_split(X, Y, test_size=0.20)
 
 #from test_data import get_train_data
 #from sklearn.model_selection import train_test_split
@@ -14,11 +18,12 @@ from test_data import get_train_numpy, get_test_numpy
 IMG_CHANNELS = 1
 
 
-model_version = 'v2'
+model_version = 'v3'
 batch_size = 32
-epochs = 100
-early_stop_patience = 5
-from test_data import IMG_HEIGHT, IMG_WIDTH
+epochs = 1000
+early_stop_patience = 10
+from data_utils import IMG_HEIGHT, IMG_WIDTH
+
 
 
 def print_to_file(msg):
@@ -29,85 +34,77 @@ print_to_file('Model Version: {}'.format(model_version))
 print_to_file('Batch Size: {}'.format(batch_size))
 print_to_file('Epochs: {}'.format(epochs))
 print_to_file('Early Stop Patience: {}'.format(early_stop_patience))
+print_to_file('Image Dimensions: {}h, {}w, {}c'.format(IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS))
 
 
 def build_model():
-    model = Sequential()
-    model.add(InputLayer(input_shape=(IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS)))
-    #model.add(Lambda(lambda x: x / 255))
+
+    input_layer = Input(shape=(IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS))
     
-    # downscale 1
-    model.add(Conv2D(16, (7, 7), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2D(16, (7, 7), strides=(1,1), padding='same', activation='elu'))
-    model.add(MaxPool2D())
+    c1 = Conv2D(32, (5, 5), padding='same', activation='elu')(input_layer)
+    c1 = Conv2D(32, (5, 5), padding='same', activation='elu')(c1)
     
-    # downscale 2
-    model.add(Conv2D(12, (5, 5), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2D(12, (5, 5), strides=(1,1), padding='same', activation='elu'))
-    model.add(MaxPool2D())
+    mp1 = MaxPool2D()(c1)
     
-    # downscale 3
-    model.add(Conv2D(8, (3, 3), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2D(8, (3, 3), strides=(1,1), padding='same', activation='elu'))
-    model.add(MaxPool2D())
+    c2 = Conv2D(48, (3, 3), padding='same', activation='elu')(mp1)
+    c2 = Conv2D(48, (3, 3), padding='same', activation='elu')(c2)
     
+    mp2 = MaxPool2D()(c2)   
     
-    # central processing
-    model.add(Conv2D(32, (7, 7), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2D(64, (5, 5), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2D(128, (3, 3), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2D(64, (5, 5), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2D(32, (7, 7), strides=(1,1), padding='same', activation='elu'))
+    c3 = Conv2D(64, (3, 3), padding='same', activation='elu')(mp2)
+    c3 = Conv2D(64, (3, 3), padding='same', activation='elu')(c3)
+    
+    mp3 = MaxPool2D()(c3)
     
     
-    # upscale 1
-    model.add(Conv2DTranspose(8, (3, 3), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2DTranspose(8, (3, 3), strides=(1,1), padding='same', activation='elu'))
-    model.add(UpSampling2D())
+    cp = Conv2D(96, (3, 3), padding='same', activation='elu')(mp3)
+    cp = Conv2D(128, (3, 3), padding='same', activation='elu')(cp)
+    cp = Conv2D(96, (3, 3), padding='same', activation='elu')(cp)
     
-    # upscale 2
-    model.add(Conv2DTranspose(12, (5, 5), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2DTranspose(12, (5, 5), strides=(1,1), padding='same', activation='elu'))
-    model.add(UpSampling2D())
     
-    # upscale 3
-    model.add(Conv2DTranspose(16, (7, 7), strides=(1,1), padding='same', activation='elu'))
-    model.add(Conv2DTranspose(16, (7, 7), strides=(1,1), padding='same', activation='elu'))
-    model.add(UpSampling2D())
+    uc1 = Conv2DTranspose(64, (3, 3), strides=(2, 2), padding='same')(cp)
+    uc1 = concatenate([uc1, c3])
+    uc1 = Conv2D(64, (3, 3), padding='same', activation='elu')(uc1)
+    uc1 = Conv2D(64, (3, 3), padding='same', activation='elu')(uc1)
     
-    # output sigmoid
-    model.add(Conv2D(1, (1, 1), activation='sigmoid'))
+    uc2 = Conv2DTranspose(48, (3, 3), strides=(2, 2), padding='same')(uc1)
+    uc2 = concatenate([uc2, c2])
+    uc2 = Conv2D(48, (3, 3), padding='same', activation='elu')(uc2)
+    uc2 = Conv2D(48, (3, 3), padding='same', activation='elu')(uc2)
+    
+    uc3 = Conv2DTranspose(32, (3, 3), strides=(2, 2), padding='same')(uc2)
+    uc3 = concatenate([uc3, c1])
+    uc3 = Conv2D(32, (3, 3), padding='same', activation='elu')(uc3)
+    uc3 = Conv2D(32, (3, 3), padding='same', activation='elu')(uc3)
+    
+    
+    oc = Conv2D(32, (3, 3), padding='same', activation='elu')(uc3)
+    oc = Conv2D(64, (3, 3), padding='same', activation='elu')(oc)
+    oc = Conv2D(32, (3, 3), padding='same', activation='elu')(oc)
+    
+    output_layer = Conv2D(1, (1, 1), activation='sigmoid')(oc)
+    
+    model = Model(inputs=[input_layer], outputs=[output_layer])
 
     return model
 
 
 
 if __name__ == '__main__':
-    #from skimage.io import imshow
-    #from matplotlib import pyplot as plt    
-    #for img, mask in zip(X, Y):
-        #plt.subplot(1,2,1)
-        #img = img.reshape(IMG_HEIGHT, IMG_WIDTH)
-        #img = img / 255
-        #imshow(img, cmap='Greys')
-        #plt.subplot(1,2,2)
-        #mask = mask.reshape(IMG_HEIGHT, IMG_WIDTH)
-        #mask = mask / 255
-        #imshow(mask, cmap='Blues')
-        #plt.show()
-    
+ 
     model = build_model()
     
     # add optimiser
     from custom_optimisers import NoisyAdam, NoisySGD
-    model.compile(optimizer=NoisySGD(), loss='binary_crossentropy')    
+    model.compile(optimizer=NoisyAdam(), loss='binary_crossentropy')    
+    #model.compile(optimizer='rmsprop', loss='binary_crossentropy')    
     
     train = True
     
     import os
     if os.path.exists('./model/model-schlerp-{}.h5'.format(model_version)):
         print('loading saved model wights...')
-        train = False
+        #train = False
         model.load_weights('./model/model-schlerp-{}.h5'.format(model_version))
     
     model.summary()
@@ -126,7 +123,7 @@ if __name__ == '__main__':
                   validation_data=(Xval, Yval), callbacks=[es, cp, tb])
     
     # test model
-    from test_data import get_test_data
+    from data_utils import get_test_data
     Xtest = get_test_data()
     Xpreds = model.predict(Xtest)
     
@@ -137,9 +134,9 @@ if __name__ == '__main__':
         plt.subplot(1,2,1)
         img = img.reshape(IMG_HEIGHT, IMG_WIDTH)
         img = img
-        imshow(img, cmap='Greys')
+        imshow(img, cmap='Greens')
         plt.subplot(1,2,2)
         mask = mask.reshape(IMG_HEIGHT, IMG_WIDTH)
         mask = mask
-        imshow(mask, cmap='Blues')
+        imshow(mask, cmap='Reds')
         plt.show()
